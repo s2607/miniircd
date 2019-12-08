@@ -31,6 +31,7 @@ import tempfile
 import time
 import json
 from datetime import datetime
+from datetime import date
 from logging.handlers import RotatingFileHandler
 from optparse import OptionParser
 
@@ -58,6 +59,13 @@ def create_directory(path):
         os.makedirs(path)
 
 notecons = {}
+
+
+class Webcon:
+    def __init__(self,name,path,port):
+        self.name=name
+        slef.path=path
+        self.prot=port
 
 
 class Notecon:
@@ -93,10 +101,15 @@ class Notecon:
                     return self
             return None
 
-    def note(self, body):
+    def note(self, sender, room, message):
         print("send note")
         try:
-            if self.send(body) == 0: 
+            body = {}
+            body["device-token"] = self.devtoken
+            body["message"] = message
+            body["room"] = room
+            body["sender"] = sender
+            if self.send(json.dumps(body)) == 0:  # hah
                 raise alk
         except:
             self.close()
@@ -107,21 +120,48 @@ class Notecon:
         del notecons[self.name]
 
 
+class Notecal:
+    def __init__(self,nick,path="./"):
+        self.nick=nick
+        self.notes=[]
+        if not path:
+            path="./"
+        self.path=path+nick+".ics"
+    def note(self,sender,room,message):
+        print("notecal note to "+self.path)
+        body="BEGIN:VCALANDAR\r\n"
+        body=body+"VERSION:2.0\r\n"
+        body=body+"BEGIN:VEVENT\r\n"
+        body=body+"DSTART:"+date.today().strftime("%Y%m%dT%H%M%S")+"\r\n"
+        body=body+"DESCRIPTION: <"+sender+"> "+message+"\r\n"
+        body=body+"BEGIN:VALARM\r\n"
+        body=body+"TRIGGER:PT1S\r\n"
+        body=body+"ACTION:DISPLAY\r\n"
+        body=body+"DESCRIPTION:NOTE\r\n"
+        body=body+"END:VALARM\r\n"
+        body=body+"END:VEVENT\r\n"
+        body=body+"END:VCALANDAR\r\n"
+        with open(self.path,"w+") as f:
+            f.truncate()
+            f.write(body)
+
+
 class Notifier:
-    def __init__(self, nick, devtoken=None, devname=None, servname="colloquy.mobi", servport=7906):
+    def __init__(self, nick, devtoken=None, devname=None, servname="", servport=0,path=""):
         self.devtoken = devtoken
         self.devname = devname
         self.servname = servname
         if(devtoken):
             self.servtype = "colloquy"
         else:
-            self.servtype = None
+            self.servtype = "ics"
         self.port = servport
         self.word = ""
         self.connectionid = ""
         self.connectionname = ""
         self.nick = irc_lower(nick)
-        self.con = None
+        self.icalpath=path
+        self.con = Notecal(self.nick,path)
 
     def setword(self, word):
         self.word = ""
@@ -130,37 +170,37 @@ class Notifier:
         self.connectionid = connectionid
         self.connectionname = connectionname
 
+    def deletservice(self):
+        self.servtype="ics"
+
     def setservice(self, service, port):
         self.service = service
         self.port = port
         self.servtype = "colloquy"
         self.con = Notecon(self.service, self.port).open()
         if(self.con):
-            return "371 :Connected to new notification server at"+(self.con)
+            return "371 Will push to "+str(self.con.socket.getpeername())
         else:
-            return "371 :ERROR connect on push service "+self.service
-
+            return "371 ERROR Can't push to "+self.service
     def note(self, sender, room, message):
-        if(self.servtype == "colloquy"):
-            body = {}
-            body["device-token"] = self.devtoken
-            body["message"] = message
-            body["room"] = room
-            body["sender"] = sender
-            self.con.send(json.dumps(body))
-    def testandsend(self, sender, room, message):
-        print("test note")
+        if(self.servtype):
+            self.con.note(sender,room,message)
+    def inspectandsend(self, sender, channel, message):
+        print("test note sender:"+sender+" channel:"+channel+"message:"+message)
         if not self.con:
             print("no note connection")
             return
-        if self.servtype and self.word in message:
-            self.note(sender, room, message)
+        if self.servtype and self.word and self.word in message:
+            print("word")
+            self.note(sender, channel, message)
             return
         if self.servtype and "@"+self.nick in message:
-            self.note(sender, room, message)
+            print("nick")
+            self.note(sender, channel, message)
             return
         if self.servtype and "@everyone" in message:
-            self.note(sender, room, message)
+            print("everyone")
+            self.note(sender, channel, message)
             return
 
 
@@ -182,6 +222,12 @@ class Channel(object):
 
     def add_member(self, client):
         self.members.add(client)
+
+    def add_note(self,nick):
+        self.notenicks.add(irc_lower(nick))
+
+    def del_note(self,nick):
+        self.notenicks.discard(irc_lower(nick))
 
     def get_topic(self):
         return self._topic
@@ -244,7 +290,7 @@ class Client(object):
         self.nickname = None
         self.user = None
         self.realname = None
-        self.notifier = Notifier("")
+        self.notifier = Notifier("",path=self.server.channel_log_dir)
         if self.server.ipv6:
             (self.host, self.port, _, _) = socket.getpeername()
         else:
@@ -379,6 +425,7 @@ class Client(object):
 
             if for_join:
                 channel.add_member(self)
+                channel.add_note(self.nickname)
                 self.channels[irc_lower(channelname)] = channel
                 self.message_channel(channel, "JOIN", channelname, True)
                 self.channel_log(channel, "joined", meta=True)
@@ -583,6 +630,7 @@ class Client(object):
                     self.channel_log(channel, "left (%s)" % partmsg, meta=True)
                     del self.channels[irc_lower(channelname)]
                     server.remove_member_from_channel(self, channelname)
+                    channel.remove_note(self.nickname)
 
         def ping_handler():
             if len(arguments) < 1:
@@ -679,9 +727,9 @@ class Client(object):
                 return
             if arguments[0] == "remove-device":
                 # only one device gets push notifications
-                self.notifier = Notifier(self.nickname)
+                self.notifier = Notifier(self.nickname,path=self.server.channel_log_dir)
             if arguments[0] == "add-device" and len(arguments) == 3:
-                self.notifier = Notifier(self.nickname, devtoken=arguments[1], devname=arguments[2])
+                self.notifier = Notifier(self.nickname, devtoken=arguments[1], devname=arguments[2],path=self.server.channel_log_dir)
             if arguments[0] == "service" and len(arguments) == 3:
                 self.reply(self.notifier.setservice(arguments[1], arguments[2]))
             if arguments[0] == "connection" and len(arguments) == 3:
@@ -772,8 +820,11 @@ class Client(object):
         for client in channel.members:
             if client != self or include_self:
                 client.message(line)
-        for nick in channel.notenicks:
-            self.server.notifiers[irc_lower(nick)].inspectandsend(channel, command, message)
+        if command == "PRIVMSG" or command == "NOTICE":
+            print("checking for notes")
+            for nick in channel.notenicks:
+                print("inspectfor "+nick)
+                self.server.notifiers[irc_lower(nick)].inspectandsend(self.prefix, channel.name, message)
 
     def channel_log(self, channel, message, meta=False):
         if not self.server.channel_log_dir:

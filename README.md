@@ -11,7 +11,7 @@ use. Installation is simple; no configuration is required.
 Features
 --------
 
-* Push notifications on ios with colloquy/compatible (in progress)
+* Push notifications on ios with colloquy/compatible and caldav (in progress)
 * Knows about the basic IRC protocol and commands.
 * Easy installation.
 * Basic SSL support.
