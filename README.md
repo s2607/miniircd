@@ -11,6 +11,7 @@ use. Installation is simple; no configuration is required.
 Features
 --------
 
+* Colloquy compatible push notifications when away (in progress)
 * Knows about the basic IRC protocol and commands.
 * Easy installation.
 * Basic SSL support.
